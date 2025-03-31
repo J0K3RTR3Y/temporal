@@ -36,6 +36,7 @@ import (
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/persistence/cassandra"
 	"go.temporal.io/server/common/persistence/faultinjection"
+	"go.temporal.io/server/common/persistence/intercept"
 	"go.temporal.io/server/common/persistence/serialization"
 	"go.temporal.io/server/common/persistence/sql"
 	"go.temporal.io/server/common/persistence/telemetry"
@@ -186,6 +187,7 @@ func DataStoreFactoryProvider(
 	logger log.Logger,
 	metricsHandler metrics.Handler,
 	tracerProvider trace.TracerProvider,
+	interceptor intercept.PersistenceInterceptor,
 ) persistence.DataStoreFactory {
 
 	var dataStoreFactory persistence.DataStoreFactory
@@ -208,6 +210,10 @@ func DataStoreFactoryProvider(
 	tracer := tracerProvider.Tracer(otel.ComponentPersistence)
 	if otel.IsEnabled(tracer) {
 		dataStoreFactory = telemetry.NewTelemetryDataStoreFactory(dataStoreFactory, logger, tracer)
+	}
+
+	if interceptor != nil {
+		dataStoreFactory = intercept.NewInterceptorDataStoreFactory(dataStoreFactory, interceptor)
 	}
 
 	return dataStoreFactory

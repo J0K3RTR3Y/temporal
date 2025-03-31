@@ -61,6 +61,7 @@ import (
 	"go.temporal.io/server/common/namespace/nsreplication"
 	"go.temporal.io/server/common/persistence"
 	persistenceClient "go.temporal.io/server/common/persistence/client"
+	"go.temporal.io/server/common/persistence/intercept"
 	"go.temporal.io/server/common/persistence/visibility"
 	esclient "go.temporal.io/server/common/persistence/visibility/store/elasticsearch/client"
 	"go.temporal.io/server/common/primitives"
@@ -113,6 +114,7 @@ type (
 		namespaceReplicationQueue        persistence.NamespaceReplicationQueue
 		abstractDataStoreFactory         persistenceClient.AbstractDataStoreFactory
 		visibilityStoreFactory           visibility.VisibilityStoreFactory
+		persistenceInterceptor           intercept.PersistenceInterceptor
 		archiverMetadata                 carchiver.ArchivalMetadata
 		archiverProvider                 provider.ArchiverProvider
 		frontendConfig                   FrontendConfig
@@ -125,7 +127,8 @@ type (
 		namespaceReplicationTaskExecutor nsreplication.TaskExecutor
 		tlsConfigProvider                *encryption.FixedTLSConfigProvider
 		captureMetricsHandler            *metricstest.CaptureHandler
-		hostsByProtocolByService         map[transferProtocol]map[primitives.ServiceName]static.Hosts
+		HostsByProtocolByService         map[transferProtocol]map[primitives.ServiceName]static.Hosts
+		additionalInterceptors           []grpc.UnaryServerInterceptor
 
 		onGetClaims          func(*authorization.AuthInfo) (*authorization.Claims, error)
 		onAuthorize          func(context.Context, *authorization.Claims, *authorization.CallTarget) (authorization.Result, error)
@@ -187,6 +190,8 @@ type (
 		ServiceFxOptions         map[primitives.ServiceName][]fx.Option
 		TaskCategoryRegistry     tasks.TaskCategoryRegistry
 		HostsByProtocolByService map[transferProtocol]map[primitives.ServiceName]static.Hosts
+		AdditionalInterceptors   []grpc.UnaryServerInterceptor
+		PersistenceInterceptor   intercept.PersistenceInterceptor
 	}
 
 	listenHostPort string
@@ -209,6 +214,7 @@ func newTemporal(t *testing.T, params *TemporalParams) *TemporalImpl {
 		namespaceReplicationQueue:        params.NamespaceReplicationQueue,
 		abstractDataStoreFactory:         params.AbstractDataStoreFactory,
 		visibilityStoreFactory:           params.VisibilityStoreFactory,
+		persistenceInterceptor:           params.PersistenceInterceptor,
 		esConfig:                         params.ESConfig,
 		esClient:                         params.ESClient,
 		archiverMetadata:                 params.ArchiverMetadata,
@@ -226,7 +232,8 @@ func newTemporal(t *testing.T, params *TemporalParams) *TemporalImpl {
 		testHooks:                testhooks.NewTestHooksImpl(),
 		serviceFxOptions:         params.ServiceFxOptions,
 		taskCategoryRegistry:     params.TaskCategoryRegistry,
-		hostsByProtocolByService: params.HostsByProtocolByService,
+		HostsByProtocolByService: params.HostsByProtocolByService,
+		additionalInterceptors:   params.AdditionalInterceptors,
 	}
 
 	for k, v := range dynamicConfigOverrides {
@@ -267,7 +274,7 @@ func (c *TemporalImpl) Stop() error {
 }
 
 func (c *TemporalImpl) makeHostMap(serviceName primitives.ServiceName, self string) map[primitives.ServiceName]static.Hosts {
-	hostMap := maps.Clone(c.hostsByProtocolByService[grpcProtocol])
+	hostMap := maps.Clone(c.HostsByProtocolByService[GRPCProtocol])
 	hosts := hostMap[serviceName]
 	hosts.Self = self
 	hostMap[serviceName] = hosts
@@ -276,17 +283,17 @@ func (c *TemporalImpl) makeHostMap(serviceName primitives.ServiceName, self stri
 
 // Use this to get an address for a remote cluster to connect to.
 func (c *TemporalImpl) RemoteFrontendGRPCAddress() string {
-	return c.hostsByProtocolByService[grpcProtocol][primitives.FrontendService].All[0]
+	return c.HostsByProtocolByService[GRPCProtocol][primitives.FrontendService].All[0]
 }
 
 func (c *TemporalImpl) FrontendHTTPAddress() string {
 	// randomize like a load balancer would
-	addrs := c.hostsByProtocolByService[httpProtocol][primitives.FrontendService].All
+	addrs := c.HostsByProtocolByService[HTTPProtocol][primitives.FrontendService].All
 	return addrs[rand.Intn(len(addrs))]
 }
 
 func (c *TemporalImpl) FrontendGRPCAddress() string {
-	return c.hostsByProtocolByService[grpcProtocol][primitives.FrontendService].All[0]
+	return c.HostsByProtocolByService[GRPCProtocol][primitives.FrontendService].All[0]
 }
 
 func (c *TemporalImpl) AdminClient() adminservice.AdminServiceClient {
@@ -338,7 +345,7 @@ func (c *TemporalImpl) startFrontend() {
 	var matchingRawClient resource.MatchingRawClient
 	var grpcResolver *membership.GRPCResolver
 
-	for _, host := range c.hostsByProtocolByService[grpcProtocol][serviceName].All {
+	for _, host := range c.HostsByProtocolByService[GRPCProtocol][serviceName].All {
 		logger := log.With(c.logger, tag.Host(host))
 		var namespaceRegistry namespace.Registry
 		app := fx.New(
@@ -346,6 +353,7 @@ func (c *TemporalImpl) startFrontend() {
 				c.copyPersistenceConfig(),
 				serviceName,
 				c.mockAdminClient,
+				c.additionalInterceptors,
 			),
 			fx.Provide(c.frontendConfigProvider),
 			fx.Provide(func() listenHostPort { return listenHostPort(host) }),
@@ -361,7 +369,6 @@ func (c *TemporalImpl) startFrontend() {
 			fx.Provide(func() provider.ArchiverProvider { return c.archiverProvider }),
 			fx.Provide(sdkClientFactoryProvider),
 			fx.Provide(c.GetMetricsHandler),
-			fx.Provide(func() []grpc.UnaryServerInterceptor { return nil }),
 			fx.Provide(func() authorization.Authorizer { return c }),
 			fx.Provide(func() authorization.ClaimMapper { return c }),
 			fx.Provide(func() authorization.JWTAudienceMapper { return nil }),
@@ -372,6 +379,7 @@ func (c *TemporalImpl) startFrontend() {
 			fx.Provide(func() resolver.ServiceResolver { return resolver.NewNoopResolver() }),
 			fx.Provide(persistenceClient.FactoryProvider),
 			fx.Provide(func() persistenceClient.AbstractDataStoreFactory { return c.abstractDataStoreFactory }),
+			fx.Provide(func() intercept.PersistenceInterceptor { return c.persistenceInterceptor }),
 			fx.Provide(func() visibility.VisibilityStoreFactory { return c.visibilityStoreFactory }),
 			fx.Provide(func() dynamicconfig.Client { return c.dcClient }),
 			fx.Decorate(func() testhooks.TestHooks { return c.testHooks }),
@@ -417,7 +425,7 @@ func (c *TemporalImpl) startFrontend() {
 func (c *TemporalImpl) startHistory() {
 	serviceName := primitives.HistoryService
 
-	for _, host := range c.hostsByProtocolByService[grpcProtocol][serviceName].All {
+	for _, host := range c.HostsByProtocolByService[GRPCProtocol][serviceName].All {
 		var namespaceRegistry namespace.Registry
 		logger := log.With(c.logger, tag.Host(host))
 		app := fx.New(
@@ -425,6 +433,7 @@ func (c *TemporalImpl) startHistory() {
 				c.copyPersistenceConfig(),
 				serviceName,
 				c.mockAdminClient,
+				c.additionalInterceptors,
 			),
 			fx.Provide(c.configProvider),
 			fx.Provide(c.GetMetricsHandler),
@@ -446,6 +455,7 @@ func (c *TemporalImpl) startHistory() {
 			fx.Provide(func() resolver.ServiceResolver { return resolver.NewNoopResolver() }),
 			fx.Provide(persistenceClient.FactoryProvider),
 			fx.Provide(func() persistenceClient.AbstractDataStoreFactory { return c.abstractDataStoreFactory }),
+			fx.Provide(func() intercept.PersistenceInterceptor { return c.persistenceInterceptor }),
 			fx.Provide(func() visibility.VisibilityStoreFactory { return c.visibilityStoreFactory }),
 			fx.Provide(func() dynamicconfig.Client { return c.dcClient }),
 			fx.Decorate(func() testhooks.TestHooks { return c.testHooks }),
@@ -479,7 +489,7 @@ func (c *TemporalImpl) startHistory() {
 func (c *TemporalImpl) startMatching() {
 	serviceName := primitives.MatchingService
 
-	for _, host := range c.hostsByProtocolByService[grpcProtocol][serviceName].All {
+	for _, host := range c.HostsByProtocolByService[GRPCProtocol][serviceName].All {
 		var namespaceRegistry namespace.Registry
 		logger := log.With(c.logger, tag.Host(host))
 		app := fx.New(
@@ -487,6 +497,7 @@ func (c *TemporalImpl) startMatching() {
 				c.copyPersistenceConfig(),
 				serviceName,
 				c.mockAdminClient,
+				c.additionalInterceptors,
 			),
 			fx.Provide(c.configProvider),
 			fx.Provide(c.GetMetricsHandler),
@@ -504,6 +515,7 @@ func (c *TemporalImpl) startMatching() {
 			fx.Provide(func() resolver.ServiceResolver { return resolver.NewNoopResolver() }),
 			fx.Provide(persistenceClient.FactoryProvider),
 			fx.Provide(func() persistenceClient.AbstractDataStoreFactory { return c.abstractDataStoreFactory }),
+			fx.Provide(func() intercept.PersistenceInterceptor { return c.persistenceInterceptor }),
 			fx.Provide(func() visibility.VisibilityStoreFactory { return c.visibilityStoreFactory }),
 			fx.Provide(func() dynamicconfig.Client { return c.dcClient }),
 			fx.Decorate(func() testhooks.TestHooks { return c.testHooks }),
@@ -542,7 +554,7 @@ func (c *TemporalImpl) startWorker() {
 		ClusterInformation:       maps.Clone(c.clusterMetadataConfig.ClusterInformation),
 	}
 
-	for _, host := range c.hostsByProtocolByService[grpcProtocol][serviceName].All {
+	for _, host := range c.HostsByProtocolByService[GRPCProtocol][serviceName].All {
 		var namespaceRegistry namespace.Registry
 		logger := log.With(c.logger, tag.Host(host))
 		app := fx.New(
@@ -551,6 +563,7 @@ func (c *TemporalImpl) startWorker() {
 				c.copyPersistenceConfig(),
 				serviceName,
 				c.mockAdminClient,
+				c.additionalInterceptors,
 			),
 			fx.Provide(c.configProvider),
 			fx.Provide(c.GetMetricsHandler),
@@ -570,6 +583,7 @@ func (c *TemporalImpl) startWorker() {
 			fx.Provide(func() resolver.ServiceResolver { return resolver.NewNoopResolver() }),
 			fx.Provide(persistenceClient.FactoryProvider),
 			fx.Provide(func() persistenceClient.AbstractDataStoreFactory { return c.abstractDataStoreFactory }),
+			fx.Provide(func() intercept.PersistenceInterceptor { return c.persistenceInterceptor }),
 			fx.Provide(func() visibility.VisibilityStoreFactory { return c.visibilityStoreFactory }),
 			fx.Provide(func() dynamicconfig.Client { return c.dcClient }),
 			fx.Decorate(func() testhooks.TestHooks { return c.testHooks }),

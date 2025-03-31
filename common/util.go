@@ -678,6 +678,14 @@ func CloneProto[T proto.Message](v T) T {
 	return proto.Clone(v).(T)
 }
 
+func CloneProtos[T proto.Message](v []T) []T {
+	var res []T
+	for _, item := range v {
+		res = append(res, CloneProto(item))
+	}
+	return res
+}
+
 func ValidateUTF8String(fieldName string, strValue string) error {
 	if !utf8.ValidString(strValue) {
 		return serviceerror.NewInvalidArgument(fmt.Sprintf("%s %v is not a valid UTF-8 string", fieldName, strValue))

@@ -571,6 +571,9 @@ func WorkerComponent(v interface{}) ZapTag {
 // FailedAssertion is a tag for marking a message as a failed assertion.
 var FailedAssertion = NewBoolTag("failed-assertion", true)
 
+// TestMarkerHit is a tag for marking a message as a test marker being hit.
+var TestMarkerHit = NewBoolTag("test-marker-hit", true)
+
 // history engine shard
 
 // ShardID returns tag for ShardID

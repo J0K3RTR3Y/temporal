@@ -97,7 +97,7 @@ var (
 
 	defaultPollAndProcessWorkflowTaskOptions = PollAndProcessWorkflowTaskOptions{
 		DumpHistory:          false,
-		DumpCommands:         true,
+		DumpCommands:         false,
 		DropTask:             false,
 		PollSticky:           false,
 		RespondSticky:        false,

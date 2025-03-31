@@ -40,7 +40,8 @@ type (
 
 	Hosts struct {
 		// Addresses of all hosts per service.
-		All []string
+		All        []string
+		ClientAddr string
 		// Address of this host. May be empty if this host is not running this service.
 		Self string
 	}

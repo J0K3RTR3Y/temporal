@@ -53,6 +53,7 @@ import (
 	"go.temporal.io/server/common/namespace"
 	"go.temporal.io/server/common/payloads"
 	"go.temporal.io/server/common/persistence"
+	"go.temporal.io/server/common/persistence/intercept"
 	"go.temporal.io/server/common/persistence/visibility"
 	"go.temporal.io/server/common/primitives"
 	"go.temporal.io/server/common/primitives/timestamp"
@@ -64,6 +65,7 @@ import (
 	"go.temporal.io/server/common/testing/updateutils"
 	"go.temporal.io/server/environment"
 	"go.uber.org/fx"
+	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +100,8 @@ type (
 		ServiceOptions         map[primitives.ServiceName][]fx.Option
 		DynamicConfigOverrides map[dynamicconfig.Key]any
 		ArchivalEnabled        bool
+		AdditionalInterceptors []grpc.UnaryServerInterceptor
+		PersistenceInterceptor intercept.PersistenceInterceptor
 	}
 	TestClusterOption func(params *TestClusterParams)
 )
@@ -116,6 +120,18 @@ type (
 func WithFxOptionsForService(serviceName primitives.ServiceName, options ...fx.Option) TestClusterOption {
 	return func(params *TestClusterParams) {
 		params.ServiceOptions[serviceName] = append(params.ServiceOptions[serviceName], options...)
+	}
+}
+
+func WithAdditionalGrpcInterceptors(interceptors ...grpc.UnaryServerInterceptor) TestClusterOption {
+	return func(params *TestClusterParams) {
+		params.AdditionalInterceptors = interceptors
+	}
+}
+
+func WithPersistenceInterceptor(interceptor intercept.PersistenceInterceptor) TestClusterOption {
+	return func(params *TestClusterParams) {
+		params.PersistenceInterceptor = interceptor
 	}
 }
 
@@ -228,6 +244,8 @@ func (s *FunctionalTestBase) SetupSuiteWithCluster(clusterConfigFile string, opt
 	// TODO (prathyush): remove this after setting it to true by default.
 	s.testClusterConfig.DynamicConfigOverrides[dynamicconfig.SendRawHistoryBetweenInternalServices.Key()] = true
 
+	s.testClusterConfig.AdditionalInterceptors = params.AdditionalInterceptors
+	s.testClusterConfig.PersistenceInterceptor = params.PersistenceInterceptor
 	s.testClusterConfig.ServiceFxOptions = params.ServiceOptions
 	s.testClusterConfig.EnableMetricsCapture = true
 	s.testClusterConfig.EnableArchival = params.ArchivalEnabled
@@ -362,6 +380,7 @@ func (s *FunctionalTestBase) TearDownCluster() {
 	if s.testCluster != nil {
 		s.Require().NoError(s.testCluster.TearDownCluster())
 	}
+	s.testCluster.TearDownCluster()
 }
 
 // **IMPORTANT**: When overridding this, make sure to invoke `s.FunctionalTestBase.TearDownTest()`.
@@ -378,7 +397,7 @@ func (s *FunctionalTestBase) checkNoUnexpectedErrorLogs() {
 	if tl, ok := s.Logger.(*testlogger.TestLogger); ok {
 		if tl.ResetFailureStatus() {
 			s.Fail(`Failing test as unexpected error logs were found.
-Look for 'Unexpected Error log encountered'.`)
+	Look for 'Unexpected Error log encountered'.`)
 		}
 	}
 }
