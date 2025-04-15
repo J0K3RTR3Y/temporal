@@ -736,6 +736,7 @@ func (n *Node) closeTransactionGenratePhysicalSideEffectTasks() error {
 				},
 			}
 			n.backend.AddTasks(physicalTask)
+			sideEffectTask.PhysicalTaskStatus = physicalTaskStatusCreated
 		}
 	}
 
@@ -1122,6 +1123,10 @@ func carryOverTaskStatus(
 		case 1:
 			targetIdx++
 		}
+	}
+
+	for ; targetIdx < len(targetTasks); targetIdx++ {
+		targetTasks[targetIdx].PhysicalTaskStatus = physicalTaskStatusNone
 	}
 }
 
