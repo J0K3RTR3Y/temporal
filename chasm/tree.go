@@ -25,6 +25,7 @@
 package chasm
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"time"
@@ -34,10 +35,12 @@ import (
 	"go.temporal.io/api/serviceerror"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	"go.temporal.io/server/common/clock"
+	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/persistence/serialization"
 	"go.temporal.io/server/common/persistence/transitionhistory"
 	"go.temporal.io/server/common/softassert"
+	"go.temporal.io/server/service/history/tasks"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,6 +50,11 @@ var (
 
 var (
 	errComponentNotFound = serviceerror.NewNotFound("component not found")
+)
+
+const (
+	physicalTaskStatusNone int32 = iota
+	physicalTaskStatusCreated
 )
 
 type (
@@ -75,6 +83,12 @@ type (
 		//   when values serializedNode and value got in-sync.
 		//   And deserialization/serialization can be skipped if synced flag is true.
 		valueSynced bool
+
+		// TODO: consider storing encoded path for the node
+		//
+		// Consider using unique package as well.
+		// Encoded path for different runs of the same Component type are the same.
+		// encodedPath string
 	}
 
 	// nodeBase is a set of dependencies and states shared by all nodes in a CHASM tree.
@@ -113,12 +127,17 @@ type (
 		// TODO: Add methods needed from MutateState here.
 		GetCurrentVersion() int64
 		NextTransitionCount() int64
+		GetWorkflowKey() definition.WorkflowKey
+		AddTasks(...tasks.Task)
 	}
 
 	// NodePathEncoder is an interface for encoding and decoding node paths.
 	// Logic outside the chasm package should only work with encoded paths.
 	NodePathEncoder interface {
 		Encode(node *Node, path []string) (string, error)
+		// TODO: Return a iterator on node name instead of []string,
+		// so that we can get a node by encoded path without additional
+		// allocation for the decoded path.
 		Decode(encodedPath string) ([]string, error)
 	}
 )
@@ -668,8 +687,123 @@ func (n *Node) AddTask(
 func (n *Node) CloseTransaction() (NodesMutation, error) {
 	defer n.cleanupTransaction()
 
+	if err := n.closeTransactionGenratePhysicalSideEffectTasks(); err != nil {
+		return NodesMutation{}, err
+	}
+
+	if err := n.closeTransactionGeneratePhysicalPureTasks(); err != nil {
+		return NodesMutation{}, err
+	}
+
 	panic("not implemented")
 	// return n.mutation, nil
+}
+
+func (n *Node) closeTransactionGenratePhysicalSideEffectTasks() error {
+	entityKey := n.backend.GetWorkflowKey()
+
+	for encodedPath, updatedNode := range n.mutation.UpdatedNodes {
+		componentAttr := updatedNode.GetMetadata().GetComponentAttributes()
+		if componentAttr == nil {
+			continue
+		}
+
+		sideEffectTasks := componentAttr.GetSideEffectTasks()
+		for idx := len(sideEffectTasks) - 1; idx >= 0; idx-- {
+			sideEffectTask := sideEffectTasks[idx]
+			if sideEffectTask.PhysicalTaskStatus == physicalTaskStatusCreated {
+				break
+			}
+
+			category, err := taskCategory(sideEffectTask)
+			if err != nil {
+				return err
+			}
+
+			physicalTask := &tasks.ChasmTask{
+				WorkflowKey:         entityKey,
+				VisibilityTimestamp: sideEffectTask.ScheduledTime.AsTime(),
+				Destination:         sideEffectTask.Destination,
+				Category:            category,
+				Info: &persistencespb.ChasmTaskInfo{
+					Ref: &persistencespb.ChasmComponentRef{
+						ComponentInitialVersionedTransition:    updatedNode.Metadata.InitialVersionedTransition,
+						ComponentLastUpdateVersionedTransition: updatedNode.Metadata.LastUpdateVersionedTransition,
+						Path:                                   encodedPath,
+					},
+					Type: sideEffectTask.Type,
+					Data: sideEffectTask.Data,
+				},
+			}
+			n.backend.AddTasks(physicalTask)
+		}
+	}
+
+	return nil
+}
+
+func (n *Node) closeTransactionGeneratePhysicalPureTasks() error {
+	var firstPureTask *persistencespb.ChasmComponentAttributes_Task
+	var firstTaskNode *Node
+	if err := n.walk(func(node *Node) error {
+		componentAttr := node.serializedNode.GetMetadata().GetComponentAttributes()
+		if componentAttr == nil {
+			return nil
+		}
+
+		pureTasks := componentAttr.GetPureTasks()
+		if len(pureTasks) == 0 {
+			return nil
+		}
+
+		if firstPureTask == nil ||
+			comparePureTasks(pureTasks[0], firstPureTask) < 0 {
+			firstPureTask = pureTasks[0]
+			firstTaskNode = node
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if firstPureTask == nil || firstPureTask.PhysicalTaskStatus == physicalTaskStatusCreated {
+		return nil
+	}
+
+	n.backend.AddTasks(&tasks.ChasmTaskPure{
+		WorkflowKey:         n.backend.GetWorkflowKey(),
+		VisibilityTimestamp: firstPureTask.ScheduledTime.AsTime(),
+		Category:            tasks.CategoryTimer,
+	})
+
+	// We need to persist the task status change as well, so add the node
+	// to the list of updated nodes.
+	// However, since task status is a cluster local field, we don't really
+	// update LastUpdateVersionedTransition for this node, and the change won't be replicated.
+	firstPureTask.PhysicalTaskStatus = physicalTaskStatusCreated
+	encodedPath, err := firstTaskNode.encodedPath()
+	if err != nil {
+		return err
+	}
+	n.mutation.UpdatedNodes[encodedPath] = firstTaskNode.serializedNode
+	return nil
+}
+
+func (n *Node) walk(
+	visitor func(node *Node) error,
+) error {
+	if err := visitor(n); err != nil {
+		return err
+	}
+
+	for _, childNode := range n.children {
+		if err := childNode.walk(visitor); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (n *Node) cleanupTransaction() {
@@ -832,6 +966,21 @@ func (n *Node) applyUpdates(
 			node.serializedNode.Metadata.LastUpdateVersionedTransition,
 			updatedNode.Metadata.LastUpdateVersionedTransition,
 		) != 0 {
+			localComponentAttr := node.serializedNode.GetMetadata().GetComponentAttributes()
+			updatedComponentAttr := updatedNode.GetMetadata().GetComponentAttributes()
+			if localComponentAttr != nil && updatedComponentAttr != nil {
+				carryOverTaskStatus(
+					localComponentAttr.SideEffectTasks,
+					updatedComponentAttr.SideEffectTasks,
+					compareSideEffectTasks,
+				)
+				carryOverTaskStatus(
+					localComponentAttr.PureTasks,
+					updatedComponentAttr.PureTasks,
+					comparePureTasks,
+				)
+			}
+
 			n.mutation.UpdatedNodes[encodedPath] = updatedNode
 			node.serializedNode = updatedNode
 			node.value = nil
@@ -842,6 +991,18 @@ func (n *Node) applyUpdates(
 	}
 
 	return nil
+}
+
+func (n *Node) encodedPath() (string, error) {
+	return n.pathEncoder.Encode(n, n.path())
+}
+
+func (n *Node) path() []string {
+	if n.parent == nil {
+		return []string{n.nodeName}
+	}
+
+	return append(n.parent.path(), n.nodeName)
 }
 
 func (n *Node) getNodeByPath(
@@ -925,4 +1086,61 @@ func newNode(
 		children: make(map[string]*Node),
 		nodeName: nodeName,
 	}
+}
+
+func compareSideEffectTasks(a, b *persistencespb.ChasmComponentAttributes_Task) int {
+	if cmpResult := transitionhistory.Compare(a.VersionedTransition, b.VersionedTransition); cmpResult != 0 {
+		return cmpResult
+	}
+	return cmp.Compare(a.VersionedTransitionOffset, b.VersionedTransitionOffset)
+}
+
+func comparePureTasks(a, b *persistencespb.ChasmComponentAttributes_Task) int {
+	if cmpResult := a.ScheduledTime.AsTime().Compare(b.ScheduledTime.AsTime()); cmpResult != 0 {
+		return cmpResult
+	}
+
+	return compareSideEffectTasks(a, b)
+}
+
+func carryOverTaskStatus(
+	sourceTasks, targetTasks []*persistencespb.ChasmComponentAttributes_Task,
+	compareFn func(a, b *persistencespb.ChasmComponentAttributes_Task) int,
+) {
+	sourceIdx, targetIdx := 0, 0
+	for sourceIdx < len(sourceTasks) && targetIdx < len(targetTasks) {
+		sourceTask := sourceTasks[sourceIdx]
+		targetTask := targetTasks[targetIdx]
+
+		switch compareFn(sourceTask, targetTask) {
+		case 0:
+			targetTask.PhysicalTaskStatus = sourceTask.PhysicalTaskStatus
+			sourceIdx++
+			targetIdx++
+		case -1:
+			sourceIdx++
+		case 1:
+			targetIdx++
+		}
+	}
+}
+
+func taskCategory(
+	task *persistencespb.ChasmComponentAttributes_Task,
+) (tasks.Category, error) {
+	isImmeidate := task.ScheduledTime.AsTime().Equal(TaskScheduledTimeImmediate)
+
+	if task.Destination != "" {
+		if !isImmeidate {
+			return tasks.Category{}, serviceerror.NewInternal(
+				fmt.Sprintf("Task cannot have both destination and scheduled time set, destination: %v, scheduled time: %v", task.Destination, task.ScheduledTime.AsTime()),
+			)
+		}
+		return tasks.CategoryOutbound, nil
+	}
+
+	if isImmeidate {
+		return tasks.CategoryTransfer, nil
+	}
+	return tasks.CategoryTimer, nil
 }
