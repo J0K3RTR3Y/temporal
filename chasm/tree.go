@@ -691,7 +691,7 @@ func (n *Node) CloseTransaction() (NodesMutation, error) {
 		return NodesMutation{}, err
 	}
 
-	if err := n.closeTransactionGeneratePhysicalPureTasks(); err != nil {
+	if err := n.closeTransactionGeneratePhysicalPureTask(); err != nil {
 		return NodesMutation{}, err
 	}
 
@@ -743,7 +743,7 @@ func (n *Node) closeTransactionGenratePhysicalSideEffectTasks() error {
 	return nil
 }
 
-func (n *Node) closeTransactionGeneratePhysicalPureTasks() error {
+func (n *Node) closeTransactionGeneratePhysicalPureTask() error {
 	var firstPureTask *persistencespb.ChasmComponentAttributes_Task
 	var firstTaskNode *Node
 	if err := n.walk(func(node *Node) error {
@@ -1121,10 +1121,13 @@ func carryOverTaskStatus(
 		case -1:
 			sourceIdx++
 		case 1:
+			// sanitize incoming task status
+			targetTask.PhysicalTaskStatus = physicalTaskStatusNone
 			targetIdx++
 		}
 	}
 
+	// sanitize incoming task status for remaining tasks
 	for ; targetIdx < len(targetTasks); targetIdx++ {
 		targetTasks[targetIdx].PhysicalTaskStatus = physicalTaskStatusNone
 	}
@@ -1133,7 +1136,7 @@ func carryOverTaskStatus(
 func taskCategory(
 	task *persistencespb.ChasmComponentAttributes_Task,
 ) (tasks.Category, error) {
-	isImmeidate := task.ScheduledTime.AsTime().Equal(TaskScheduledTimeImmediate)
+	isImmeidate := task.ScheduledTime == nil || task.ScheduledTime.AsTime().Equal(TaskScheduledTimeImmediate)
 
 	if task.Destination != "" {
 		if !isImmeidate {
