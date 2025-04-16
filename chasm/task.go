@@ -37,9 +37,16 @@ type (
 		Destination   string
 	}
 
-	TaskHandler[C any, T any] interface {
-		Validate(Context, C, T) error
+	SideEffectTaskHandler[C any, T any] interface {
 		Execute(context.Context, ComponentRef, T) error
+	}
+
+	PureTaskHandler[C any, T any] interface {
+		Execute(Context, C, T) error
+	}
+
+	TaskValidator[C any, T any] interface {
+		Validate(Context, C, T) error
 	}
 )
 
