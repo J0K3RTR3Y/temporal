@@ -703,6 +703,8 @@ func (n *Node) AddTask(
 func (n *Node) CloseTransaction() (NodesMutation, error) {
 	defer n.cleanupTransaction()
 
+	// TODO: serialize updated nodes and update tree structure here.
+
 	if err := n.closeTransactionUpdateComponentTasks(); err != nil {
 		return NodesMutation{}, err
 	}
@@ -727,8 +729,17 @@ func (n *Node) closeTransactionUpdateComponentTasks() error {
 	}
 
 	return n.walk(func(node *Node) error {
-		// no-op if node is clean
-		if node.value == nil || node.valueSynced {
+		// no-op if node is not even deserialized
+		// NOTE: do not check node.valueSynced here, because this method needs to be called
+		// after the tree structure is updated and value is serialized, and that flag will
+		// get reset.
+		if node.value == nil {
+			return nil
+		}
+
+		// no-op if node is not updated in this transition
+		lastUpdateVT := node.serializedNode.GetMetadata().LastUpdateVersionedTransition
+		if transitionhistory.Compare(lastUpdateVT, nextVersionedTransition) != 0 {
 			return nil
 		}
 
