@@ -24,8 +24,6 @@
 package chasm
 
 import (
-	"context"
-
 	commonpb "go.temporal.io/api/common/v1"
 )
 
@@ -38,21 +36,3 @@ type (
 		Payload *commonpb.Payload
 	}
 )
-
-type TestTaskValidator[C any, T any] struct{}
-
-func (v *TestTaskValidator[C, T]) Validate(_ Context, _ C, _ T) error {
-	return nil
-}
-
-type TestSideEffectTaskHandler[C any, T any] struct{}
-
-func (h *TestSideEffectTaskHandler[C, T]) Execute(_ context.Context, _ ComponentRef, _ T) error {
-	return nil
-}
-
-type TestPureTaskHandler[C any, T any] struct{}
-
-func (h *TestPureTaskHandler[C, T]) Execute(_ Context, _ C, _ T) error {
-	return nil
-}

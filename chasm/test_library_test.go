@@ -22,14 +22,25 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+// TODO: move this to chasm_test package
 package chasm
+
+import (
+	"go.uber.org/mock/gomock"
+)
 
 type TestLibrary struct {
 	UnimplementedLibrary
+
+	controller *gomock.Controller
 }
 
-func newTestLibrary() *TestLibrary {
-	return &TestLibrary{}
+func newTestLibrary(
+	controller *gomock.Controller,
+) *TestLibrary {
+	return &TestLibrary{
+		controller: controller,
+	}
 }
 
 func (l *TestLibrary) Name() string {
@@ -49,19 +60,19 @@ func (l *TestLibrary) Tasks() []*RegistrableTask {
 	return []*RegistrableTask{
 		NewRegistrableSideEffectTask(
 			"test_side_effect_task",
-			&TestTaskValidator[any, *TestSideEffectTask]{},
-			&TestSideEffectTaskHandler[any, *TestSideEffectTask]{},
+			NewMockTaskValidator[any, *TestSideEffectTask](l.controller),
+			NewMockSideEffectTaskExecutor[any, *TestSideEffectTask](l.controller),
 		),
 		NewRegistrableSideEffectTask(
 			// NOTE this task is registered as a struct, instead of pointer to struct.
 			"test_outbound_side_effect_task",
-			&TestTaskValidator[any, TestOutboundSideEffectTask]{},
-			&TestSideEffectTaskHandler[any, TestOutboundSideEffectTask]{},
+			NewMockTaskValidator[any, TestOutboundSideEffectTask](l.controller),
+			NewMockSideEffectTaskExecutor[any, TestOutboundSideEffectTask](l.controller),
 		),
 		NewRegistrablePureTask(
 			"test_pure_task",
-			&TestTaskValidator[any, *TestPureTask]{},
-			&TestPureTaskHandler[any, *TestPureTask]{},
+			NewMockTaskValidator[any, *TestPureTask](l.controller),
+			NewMockPureTaskExecutor[any, *TestPureTask](l.controller),
 		),
 	}
 }
