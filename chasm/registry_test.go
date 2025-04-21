@@ -84,12 +84,12 @@ func TestRegistry_RegisterTasks_Success(t *testing.T) {
 		chasm.NewRegistrableSideEffectTask[*chasm.MockComponent, testTask1](
 			"Task1",
 			chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-			chasm.NewMockSideEffectTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+			chasm.NewMockSideEffectTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 		),
 		chasm.NewRegistrablePureTask[testTaskComponentInterface, testTask2](
 			"Task2",
 			chasm.NewMockTaskValidator[testTaskComponentInterface, testTask2](ctrl),
-			chasm.NewMockPureTaskHandler[testTaskComponentInterface, testTask2](ctrl),
+			chasm.NewMockPureTaskExecutor[testTaskComponentInterface, testTask2](ctrl),
 		),
 	})
 
@@ -232,7 +232,7 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 				"",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 		})
 		err := r.Register(lib)
@@ -245,7 +245,7 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 				"bad.task.name",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 		})
 		r := chasm.NewRegistry()
@@ -259,12 +259,12 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 				"Task1",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 			chasm.NewRegistrableSideEffectTask[*chasm.MockComponent, testTask1](
 				"Task1",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockSideEffectTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockSideEffectTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 		})
 		r := chasm.NewRegistry()
@@ -278,12 +278,12 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 				"Task1",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 				"Task2",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 			),
 		})
 		r := chasm.NewRegistry()
@@ -300,7 +300,7 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 		task := chasm.NewRegistrablePureTask[*chasm.MockComponent, testTask1](
 			"Task1",
 			chasm.NewMockTaskValidator[*chasm.MockComponent, testTask1](ctrl),
-			chasm.NewMockPureTaskHandler[*chasm.MockComponent, testTask1](ctrl),
+			chasm.NewMockPureTaskExecutor[*chasm.MockComponent, testTask1](ctrl),
 		)
 		lib2.EXPECT().Tasks().Return([]*chasm.RegistrableTask{task})
 		r2 := chasm.NewRegistry()
@@ -320,7 +320,7 @@ func TestRegistry_RegisterTasks_Error(t *testing.T) {
 			chasm.NewRegistrablePureTask[*chasm.MockComponent, string](
 				"Task1",
 				chasm.NewMockTaskValidator[*chasm.MockComponent, string](ctrl),
-				chasm.NewMockPureTaskHandler[*chasm.MockComponent, string](ctrl),
+				chasm.NewMockPureTaskExecutor[*chasm.MockComponent, string](ctrl),
 			),
 		})
 		r := chasm.NewRegistry()

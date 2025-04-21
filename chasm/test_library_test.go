@@ -44,3 +44,24 @@ func (l *TestLibrary) Components() []*RegistrableComponent {
 		NewRegistrableComponent[*TestSubComponent2]("test_sub_component_2"),
 	}
 }
+
+func (l *TestLibrary) Tasks() []*RegistrableTask {
+	return []*RegistrableTask{
+		NewRegistrableSideEffectTask(
+			"test_side_effect_task",
+			&TestTaskValidator[any, *TestSideEffectTask]{},
+			&TestSideEffectTaskHandler[any, *TestSideEffectTask]{},
+		),
+		NewRegistrableSideEffectTask(
+			// NOTE this task is registered as a struct, instead of pointer to struct.
+			"test_outbound_side_effect_task",
+			&TestTaskValidator[any, TestOutboundSideEffectTask]{},
+			&TestSideEffectTaskHandler[any, TestOutboundSideEffectTask]{},
+		),
+		NewRegistrablePureTask(
+			"test_pure_task",
+			&TestTaskValidator[any, *TestPureTask]{},
+			&TestPureTaskHandler[any, *TestPureTask]{},
+		),
+	}
+}

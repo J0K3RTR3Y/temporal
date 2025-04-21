@@ -175,6 +175,7 @@ func NewTree(
 			UpdatedNodes: make(map[string]*persistencespb.ChasmNode),
 			DeletedNodes: make(map[string]struct{}),
 		},
+		newTasks: make(map[any][]taskWithAttributes),
 	}
 
 	root := newNode(base, nil, "")
@@ -208,6 +209,11 @@ func NewEmptyTree(
 		timeSource:  timeSource,
 		backend:     backend,
 		pathEncoder: pathEncoder,
+		mutation: NodesMutation{
+			UpdatedNodes: make(map[string]*persistencespb.ChasmNode),
+			DeletedNodes: make(map[string]struct{}),
+		},
+		newTasks: make(map[any][]taskWithAttributes),
 	}
 	root := newNode(base, nil, "")
 	return root

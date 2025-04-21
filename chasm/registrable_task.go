@@ -46,7 +46,7 @@ type (
 func NewRegistrableSideEffectTask[C any, T any](
 	taskType string,
 	validator TaskValidator[C, T],
-	handler SideEffectTaskHandler[C, T],
+	handler SideEffectTaskExecutor[C, T],
 	opts ...RegistrableTaskOption,
 ) *RegistrableTask {
 	return newRegistrableTask(
@@ -63,7 +63,7 @@ func NewRegistrableSideEffectTask[C any, T any](
 func NewRegistrablePureTask[C any, T any](
 	taskType string,
 	validator TaskValidator[C, T],
-	handler PureTaskHandler[C, T],
+	handler PureTaskExecutor[C, T],
 	opts ...RegistrableTaskOption,
 ) *RegistrableTask {
 	return newRegistrableTask(
