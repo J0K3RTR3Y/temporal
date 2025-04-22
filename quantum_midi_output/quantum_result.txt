@@ -1,0 +1,6 @@
+Quantum MIDI Processing Result
+============================
+
+Original notes: [67, 69, 62, 67, 67, 71, 64, 67, 64, 72, 67, 62, 72, 65, 65, 62, 72, 71, 62, 65]
+
+Transformed notes: [64]
